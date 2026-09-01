@@ -1,0 +1,1071 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Signal — audio visualizer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,300;0,500;1,400&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink: #0A0C10;
+    --panel: #14171D;
+    --panel-line: #262B33;
+    --paper: #EDE8DD;
+    --paper-dim: #8B8A82;
+    --amber: #E8A33D;
+    --amber-dim: #7A5A26;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    background: var(--ink);
+    overflow: hidden;
+    font-family: 'Space Mono', monospace;
+  }
+  #stage {
+    position: relative;
+    width: 100vw;
+    height: 100vh;
+  }
+  canvas#viz {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    display: block;
+  }
+  .corner {
+    position: absolute;
+    top: 28px;
+    left: 32px;
+    z-index: 5;
+    pointer-events: none;
+  }
+  .corner h1 {
+    font-family: 'Fraunces', serif;
+    font-weight: 500;
+    font-style: italic;
+    font-size: 22px;
+    color: var(--paper);
+    margin: 0;
+    letter-spacing: 0.01em;
+  }
+  .corner p {
+    font-size: 11px;
+    color: var(--paper-dim);
+    margin: 4px 0 0;
+    max-width: 220px;
+    line-height: 1.5;
+  }
+  .status {
+    position: absolute;
+    top: 32px;
+    right: 32px;
+    z-index: 5;
+    font-size: 11px;
+    color: var(--paper-dim);
+    text-align: right;
+    line-height: 1.6;
+  }
+  .status .dot {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--panel-line);
+    margin-left: 6px;
+  }
+  .status .dot.live {
+    background: var(--amber);
+  }
+  #empty {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    z-index: 3;
+    text-align: center;
+    padding: 24px;
+  }
+  #empty h2 {
+    font-family: 'Fraunces', serif;
+    font-weight: 300;
+    font-size: clamp(28px, 5vw, 48px);
+    color: var(--paper);
+    margin: 0 0 12px;
+  }
+  #empty p {
+    font-size: 12px;
+    color: var(--paper-dim);
+    max-width: 320px;
+    line-height: 1.7;
+    margin: 0;
+  }
+  .dock {
+    position: absolute;
+    bottom: 28px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 5;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: rgba(20, 23, 29, 0.82);
+    border: 1px solid var(--panel-line);
+    border-radius: 999px;
+    padding: 8px;
+    backdrop-filter: blur(10px);
+  }
+  .dock button {
+    font-family: 'Space Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 0.03em;
+    color: var(--paper);
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 999px;
+    padding: 10px 16px;
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+    white-space: nowrap;
+  }
+  .dock button:hover {
+    background: rgba(237, 232, 221, 0.06);
+    border-color: var(--panel-line);
+  }
+  .dock button.primary {
+    background: var(--amber);
+    color: #241A08;
+    font-weight: 700;
+  }
+  .dock button.primary:hover {
+    background: #f0b055;
+  }
+  .dock button.active {
+    color: var(--amber);
+    border-color: var(--amber-dim);
+  }
+  .dock button:disabled {
+    opacity: 0.35;
+    cursor: default;
+  }
+  .dock .divider {
+    width: 1px;
+    height: 20px;
+    background: var(--panel-line);
+    margin: 0 2px;
+  }
+  #fileInput { display: none; }
+  .track-label {
+    position: absolute;
+    bottom: 92px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 5;
+    font-size: 11px;
+    color: var(--paper-dim);
+    max-width: 70vw;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .track-label span { color: var(--amber); }
+  #lyricDisplay {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 4;
+    font-family: 'Fraunces', serif;
+    font-style: italic;
+    font-weight: 500;
+    font-size: clamp(24px, 5vw, 56px);
+    color: var(--paper);
+    opacity: 0;
+    pointer-events: none;
+    text-align: center;
+    text-shadow: 0 0 24px rgba(0,0,0,0.6);
+    transition: opacity 0.4s ease, transform 0.4s ease;
+  }
+  #lyricDisplay.show {
+    opacity: 0.92;
+    transform: translate(-50%, -50%) scale(1.04);
+  }
+  .lyrics-bar {
+    position: absolute;
+    bottom: 132px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 6;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .lyrics-bar input {
+    font-family: 'Space Mono', monospace;
+    font-size: 11px;
+    color: var(--paper);
+    background: rgba(20, 23, 29, 0.82);
+    border: 1px solid var(--panel-line);
+    border-radius: 999px;
+    padding: 8px 16px;
+    width: 340px;
+    max-width: 60vw;
+    outline: none;
+    backdrop-filter: blur(10px);
+    transition: border-color 0.2s ease;
+  }
+  .lyrics-bar input::placeholder { color: var(--paper-dim); }
+  .lyrics-bar input.saved { border-color: var(--amber); }
+  .hype-ticker {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 40px;
+    overflow: hidden;
+    z-index: 4;
+    pointer-events: none;
+    background: linear-gradient(180deg, rgba(10,12,16,0.5) 0%, rgba(10,12,16,0) 100%);
+    display: none;
+  }
+  .hype-ticker.active { display: block; }
+  .hype-ticker-track {
+    position: absolute;
+    white-space: nowrap;
+    top: 12px;
+    font-family: 'Space Mono', monospace;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    color: var(--amber);
+  }
+</style>
+</head>
+<body>
+<div id="stage">
+  <canvas id="viz"></canvas>
+
+  <div class="corner">
+    <h1>Signal</h1>
+    <p>An audio-reactive canvas. Drop in a track or hand it your microphone.</p>
+  </div>
+
+  <div class="status">
+    <div>SOURCE <span id="sourceLabel">none</span><span class="dot" id="statusDot"></span></div>
+    <div id="modeLabel" style="margin-top:2px;">MODE 01/05 — RADIAL</div>
+    <div id="themeLabel" style="margin-top:2px;">PALETTE — AUTO</div>
+  </div>
+
+  <div id="empty">
+    <h2>waiting for sound</h2>
+    <p>load a track or start the microphone below — the shapes only move when something's playing.</p>
+  </div>
+
+  <div class="track-label" id="trackLabel" style="display:none;"></div>
+  <div id="lyricDisplay"></div>
+  <div class="hype-ticker" id="hypeTicker"><div class="hype-ticker-track" id="hypeTickerTrack"></div></div>
+
+  <div class="dock">
+    <button id="btnUpload" class="primary">upload track</button>
+    <button id="btnMic">use mic</button>
+    <div class="divider"></div>
+    <button id="btnPlay" disabled>play</button>
+    <div class="divider"></div>
+    <button id="btnMode">mode →</button>
+    <button id="btnTheme">palette →</button>
+  </div>
+
+  <div class="lyrics-bar">
+    <input type="text" id="lyricsInput" placeholder="type lyric words, comma separated, press enter">
+  </div>
+
+  <input type="file" id="fileInput" accept="audio/*">
+</div>
+
+<script>
+(function() {
+  const canvas = document.getElementById('viz');
+  const ctx = canvas.getContext('2d');
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+
+  function resize() {
+    canvas.width = window.innerWidth * dpr;
+    canvas.height = window.innerHeight * dpr;
+    canvas.style.width = window.innerWidth + 'px';
+    canvas.style.height = window.innerHeight + 'px';
+    initStars(canvas.width, canvas.height);
+  }
+  window.addEventListener('resize', resize);
+
+  let audioCtx, analyser, source, dataArray, bufferLength;
+  let audioBuffer = null;
+  let bufferSourceNode = null;
+  let startedAt = 0;
+  let pausedAt = 0;
+  let isPlayingFile = false;
+  let micStream = null;
+  let rafId = null;
+  let mode = 0;
+  const MODES = ['RADIAL', 'BARS', 'RIBBON', 'ORBIT', 'KALEIDOSCOPE'];
+
+  const THEMES = [
+    { name: 'AUTO',    base: 28,  spread: 300, sat: 1 },
+    { name: 'EMBER',   base: 8,   spread: 42,  sat: 1.05 },
+    { name: 'NEON',    base: 195, spread: 170, sat: 1.15 },
+    { name: 'TOXIC',   base: 96,  spread: 55,  sat: 1.1 },
+    { name: 'ICE',     base: 202, spread: 65,  sat: 0.95 },
+    { name: 'MONO',    base: 0,   spread: 0,   sat: 0 }
+  ];
+  let themeIdx = 0;
+  function currentTheme() { return THEMES[themeIdx]; }
+  function col(h, s, l, a) {
+    const t = currentTheme();
+    const sat = Math.max(0, Math.min(100, s * t.sat));
+    return 'hsla(' + h + ', ' + sat + '%, ' + l + '%, ' + a + ')';
+  }
+
+  const emptyState = document.getElementById('empty');
+  const statusDot = document.getElementById('statusDot');
+  const sourceLabel = document.getElementById('sourceLabel');
+  const modeLabel = document.getElementById('modeLabel');
+  const trackLabel = document.getElementById('trackLabel');
+  const btnPlay = document.getElementById('btnPlay');
+  const btnUpload = document.getElementById('btnUpload');
+  const btnMic = document.getElementById('btnMic');
+  const btnMode = document.getElementById('btnMode');
+  const fileInput = document.getElementById('fileInput');
+
+  function ensureAudioCtx() {
+    if (!audioCtx) {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 512;
+      analyser.smoothingTimeConstant = 0.82;
+      bufferLength = analyser.frequencyCount || analyser.frequencyBinCount;
+      dataArray = new Uint8Array(analyser.frequencyBinCount);
+    }
+  }
+
+  function stopCurrentSource() {
+    if (source) {
+      try { source.disconnect(); } catch(e) {}
+      source = null;
+    }
+    if (micStream) {
+      micStream.getTracks().forEach(t => t.stop());
+      micStream = null;
+    }
+    if (bufferSourceNode) {
+      try { bufferSourceNode.onended = null; bufferSourceNode.stop(); } catch(e) {}
+      try { bufferSourceNode.disconnect(); } catch(e) {}
+      bufferSourceNode = null;
+    }
+    audioBuffer = null;
+    pausedAt = 0;
+    isPlayingFile = false;
+    resetHypeLog();
+  }
+
+  function setSource(label, live) {
+    sourceLabel.textContent = label;
+    statusDot.classList.toggle('live', !!live);
+  }
+
+  function startVisual() {
+    emptyState.style.display = 'none';
+    if (!rafId) draw();
+  }
+
+  function stopVisual() {
+    if (rafId) {
+      cancelAnimationFrame(rafId);
+      rafId = null;
+    }
+  }
+
+  // ---- File upload ----
+  // Decodes the file directly into raw audio samples via decodeAudioData,
+  // instead of routing through an <audio> element. This sidesteps the
+  // "no supported source" failures that <audio>+blob-URL playback can hit
+  // in some local/offline browser setups — decodeAudioData works straight
+  // off the file's bytes.
+  btnUpload.addEventListener('click', () => fileInput.click());
+
+  function playBufferFrom(offset) {
+    if (bufferSourceNode) {
+      try { bufferSourceNode.onended = null; bufferSourceNode.stop(); } catch(e) {}
+      try { bufferSourceNode.disconnect(); } catch(e) {}
+    }
+    bufferSourceNode = audioCtx.createBufferSource();
+    bufferSourceNode.buffer = audioBuffer;
+    bufferSourceNode.connect(analyser);
+    analyser.connect(audioCtx.destination);
+    bufferSourceNode.onended = () => {
+      if (isPlayingFile) {
+        isPlayingFile = false;
+        pausedAt = 0;
+        btnPlay.textContent = 'play';
+        setSource('file', false);
+      }
+    };
+    startedAt = audioCtx.currentTime - offset;
+    bufferSourceNode.start(0, offset);
+    isPlayingFile = true;
+  }
+
+  function loadAndPlayFile(file) {
+    try {
+      ensureAudioCtx();
+      stopCurrentSource();
+      trackLabel.style.display = 'block';
+      trackLabel.innerHTML = 'loading <span>' + file.name + '</span>...';
+
+      file.arrayBuffer()
+        .then((buf) => audioCtx.decodeAudioData(buf))
+        .then((decoded) => {
+          audioBuffer = decoded;
+          pausedAt = 0;
+          playBufferFrom(0);
+          btnPlay.disabled = false;
+          btnPlay.textContent = 'pause';
+          setSource('file', true);
+          trackLabel.innerHTML = 'now playing <span>' + file.name.replace(/\.[^/.]+$/, '') + '</span>';
+          startVisual();
+        })
+        .catch((err) => {
+          setSource('error', false);
+          trackLabel.style.display = 'block';
+          trackLabel.innerHTML = '<span style="color:#E88888;">couldn\'t decode "' + file.name + '" — ' + (err.message || 'the format may not be supported, try mp3 or wav') + '</span>';
+        });
+    } catch (err) {
+      setSource('error', false);
+      trackLabel.style.display = 'block';
+      trackLabel.innerHTML = '<span style="color:#E88888;">something went wrong loading that file — ' + (err.message || String(err)) + '</span>';
+    }
+  }
+
+  fileInput.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    loadAndPlayFile(file);
+  });
+
+  // ---- Microphone ----
+  btnMic.addEventListener('click', async () => {
+    if (!window.isSecureContext) {
+      setSource('needs https', false);
+      trackLabel.style.display = 'block';
+      trackLabel.innerHTML = '<span style="color:#E88888;">mic access is blocked on this connection — browsers only allow it over https or when the page is served locally, not from an opened file. try it inside claude.ai directly, or serve this file from a local server.</span>';
+      return;
+    }
+    try {
+      ensureAudioCtx();
+      stopCurrentSource();
+      trackLabel.style.display = 'none';
+      micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      await audioCtx.resume();
+      source = audioCtx.createMediaStreamSource(micStream);
+      source.connect(analyser);
+      // do not connect analyser to destination for mic, avoids feedback
+      setSource('microphone', true);
+      btnPlay.disabled = true;
+      btnPlay.textContent = 'play';
+      startVisual();
+    } catch (err) {
+      setSource('mic denied', false);
+      trackLabel.style.display = 'block';
+      trackLabel.innerHTML = '<span style="color:#E88888;">' + (err.name === 'NotAllowedError' ? 'microphone permission was denied — check your browser\'s site settings.' : (err.message || 'could not access the microphone.')) + '</span>';
+    }
+  });
+
+  // ---- Play/pause ----
+  btnPlay.addEventListener('click', () => {
+    if (!audioBuffer) return;
+    if (isPlayingFile) {
+      pausedAt = audioCtx.currentTime - startedAt;
+      if (bufferSourceNode) {
+        try { bufferSourceNode.onended = null; bufferSourceNode.stop(); } catch(e) {}
+      }
+      isPlayingFile = false;
+      btnPlay.textContent = 'play';
+      setSource('file', false);
+    } else {
+      playBufferFrom(pausedAt % audioBuffer.duration);
+      btnPlay.textContent = 'pause';
+      setSource('file', true);
+    }
+  });
+
+  // ---- Mode switch ----
+  const btnTheme = document.getElementById('btnTheme');
+  const themeLabel = document.getElementById('themeLabel');
+  btnMode.addEventListener('click', () => {
+    mode = (mode + 1) % MODES.length;
+    modeLabel.textContent = 'MODE 0' + (mode + 1) + '/05 — ' + MODES[mode];
+  });
+
+  btnTheme.addEventListener('click', () => {
+    themeIdx = (themeIdx + 1) % THEMES.length;
+    themeLabel.textContent = 'PALETTE — ' + THEMES[themeIdx].name;
+  });
+
+  // ---- Drawing ----
+  function hueFromSpectrum(avgBass, avgMid, avgTreble) {
+    const t = currentTheme();
+    const weighted = (avgBass * 0.5 + avgMid * 1.0 + avgTreble * 1.6) / 3;
+    return (t.base + weighted * t.spread / 255 + 360) % 360;
+  }
+
+  // ---- Beat detection ----
+  let bassHistory = [];
+  const BASS_HISTORY_SIZE = 40;
+  let lastBeatAt = 0;
+  let shakeAmount = 0;
+  let flashAmount = 0;
+
+  function detectBeat(bassAvg, now) {
+    bassHistory.push(bassAvg);
+    if (bassHistory.length > BASS_HISTORY_SIZE) bassHistory.shift();
+    const localAvg = bassHistory.reduce((a, b) => a + b, 0) / bassHistory.length;
+    const threshold = localAvg * 1.42 + 6;
+    const isBeat = bassAvg > threshold && bassAvg > 60 && (now - lastBeatAt) > 140;
+    if (isBeat) lastBeatAt = now;
+    return isBeat;
+  }
+
+  // ---- Ambient starfield (always-on background depth) ----
+  let stars = [];
+  function initStars(w, h) {
+    stars = [];
+    const count = Math.floor((w * h) / 22000);
+    for (let i = 0; i < count; i++) {
+      stars.push({
+        x: Math.random() * w,
+        y: Math.random() * h,
+        r: (0.5 + Math.random() * 1.2) * dpr,
+        phase: Math.random() * Math.PI * 2,
+        speed: 0.6 + Math.random() * 1.4
+      });
+    }
+  }
+  function drawStars(w, h, trebleAvg, now) {
+    const t = now / 1000;
+    for (let i = 0; i < stars.length; i++) {
+      const s = stars[i];
+      const twinkle = 0.3 + 0.7 * (0.5 + 0.5 * Math.sin(t * s.speed + s.phase));
+      const boost = 1 + trebleAvg / 200;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, s.r * boost, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(237, 232, 221, ' + (twinkle * 0.35) + ')';
+      ctx.fill();
+    }
+  }
+
+  // ---- Particle system ----
+  let particles = [];
+  function spawnBurst(cx, cy, count, hue, power) {
+    for (let i = 0; i < count; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const speed = (2 + Math.random() * 6) * (1 + power / 200) * dpr;
+      particles.push({
+        x: cx, y: cy,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed,
+        life: 1,
+        decay: 0.012 + Math.random() * 0.015,
+        size: (1.5 + Math.random() * 2.5) * dpr,
+        hue: (hue + (Math.random() * 50 - 25) + 360) % 360
+      });
+    }
+    if (particles.length > 400) particles.splice(0, particles.length - 400);
+  }
+
+  function updateAndDrawParticles() {
+    for (let i = particles.length - 1; i >= 0; i--) {
+      const p = particles[i];
+      p.x += p.vx;
+      p.y += p.vy;
+      p.vx *= 0.98;
+      p.vy *= 0.98;
+      p.life -= p.decay;
+      if (p.life <= 0) { particles.splice(i, 1); continue; }
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2);
+      ctx.fillStyle = col(p.hue, 85, 65, p.life * 0.9);
+      ctx.fill();
+    }
+  }
+
+  // ---- Butterflies (spawn on beat, present in every mode) ----
+  let butterflies = [];
+  function spawnButterfly(w, h, hue) {
+    const edge = Math.floor(Math.random() * 4);
+    let x, y;
+    if (edge === 0) { x = Math.random() * w; y = -20 * dpr; }
+    else if (edge === 1) { x = w + 20 * dpr; y = Math.random() * h; }
+    else if (edge === 2) { x = Math.random() * w; y = h + 20 * dpr; }
+    else { x = -20 * dpr; y = Math.random() * h; }
+    butterflies.push({
+      x, y,
+      targetX: w * (0.25 + Math.random() * 0.5),
+      targetY: h * (0.25 + Math.random() * 0.5),
+      wingPhase: Math.random() * Math.PI * 2,
+      wingSpeed: 8 + Math.random() * 5,
+      size: (10 + Math.random() * 10) * dpr,
+      hue: (hue + Math.random() * 40 - 20 + 360) % 360,
+      life: 1,
+      decay: 0.0016 + Math.random() * 0.0014,
+      wander: Math.random() * Math.PI * 2
+    });
+    if (butterflies.length > 14) butterflies.shift();
+  }
+  function updateAndDrawButterflies(now) {
+    for (let i = butterflies.length - 1; i >= 0; i--) {
+      const b = butterflies[i];
+      b.life -= b.decay;
+      if (b.life <= 0) { butterflies.splice(i, 1); continue; }
+      b.wander += 0.02;
+      b.x += (b.targetX - b.x) * 0.01 + Math.sin(b.wander) * 1.2;
+      b.y += (b.targetY - b.y) * 0.01 + Math.cos(b.wander * 0.7) * 1.2;
+      const flap = Math.sin(now / 1000 * b.wingSpeed + b.wingPhase);
+      const wingSpread = 0.3 + Math.abs(flap) * 0.7;
+
+      ctx.save();
+      ctx.translate(b.x, b.y);
+      ctx.globalAlpha = b.life * 0.85;
+      ctx.fillStyle = col(b.hue, 80, 62, 1);
+      ctx.beginPath();
+      ctx.ellipse(-b.size * 0.35, 0, b.size * 0.5 * wingSpread, b.size * 0.35, 0.4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.ellipse(b.size * 0.35, 0, b.size * 0.5 * wingSpread, b.size * 0.35, -0.4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = col(b.hue, 40, 25, 1);
+      ctx.beginPath();
+      ctx.ellipse(0, 0, b.size * 0.08, b.size * 0.3, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+  }
+
+  // ---- Hype text bursts (original meme-energy pop text, not real memes) ----
+  const HYPE_WORDS = ['fire', 'LFG', 'vibing', 'no cap', 'sheesh', 'let\'s go', 'insane', 'yes!!'];
+  let hypeTexts = [];
+  function spawnHypeText(w, h, hue) {
+    const word = HYPE_WORDS[Math.floor(Math.random() * HYPE_WORDS.length)];
+    hypeTexts.push({
+      text: word,
+      x: w * (0.2 + Math.random() * 0.6),
+      y: h * (0.3 + Math.random() * 0.4),
+      hue,
+      life: 1,
+      size: (20 + Math.random() * 14) * dpr
+    });
+    if (hypeTexts.length > 6) hypeTexts.shift();
+    pushHypeLog(word);
+  }
+  function updateAndDrawHypeTexts() {
+    for (let i = hypeTexts.length - 1; i >= 0; i--) {
+      const t = hypeTexts[i];
+      t.life -= 0.014;
+      t.y -= 0.6 * dpr;
+      if (t.life <= 0) { hypeTexts.splice(i, 1); continue; }
+      const scale = t.life < 0.85 ? 1 : 1 + (1 - t.life / 0.85) * 0.4;
+      ctx.save();
+      ctx.font = '700 ' + (t.size * scale) + 'px "Space Mono", monospace';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = col(t.hue, 90, 68, t.life);
+      ctx.fillText(t.text, t.x, t.y);
+      ctx.restore();
+    }
+  }
+
+  // ---- Persistent hype ticker: every hype word ever spawned this song,
+  // scrolling continuously, staying visible for the whole track ----
+  const hypeTicker = document.getElementById('hypeTicker');
+  const hypeTickerTrack = document.getElementById('hypeTickerTrack');
+  let hypeLog = [];
+  let tickerOffset = 0;
+  function pushHypeLog(word) {
+    hypeLog.push(word.toUpperCase());
+    if (hypeLog.length > 200) hypeLog.shift();
+    hypeTickerTrack.textContent = hypeLog.map(w => '\u2726 ' + w).join('    ');
+    hypeTicker.classList.add('active');
+  }
+  function resetHypeLog() {
+    hypeLog = [];
+    tickerOffset = 0;
+    hypeTickerTrack.textContent = '';
+    hypeTicker.classList.remove('active');
+  }
+  function updateHypeTicker(dtSeconds) {
+    if (!hypeLog.length) return;
+    const speedPx = 68;
+    tickerOffset -= speedPx * dtSeconds;
+    const trackWidth = hypeTickerTrack.scrollWidth || 1;
+    if (tickerOffset < -trackWidth) tickerOffset = window.innerWidth;
+    hypeTickerTrack.style.transform = 'translateX(' + tickerOffset + 'px)';
+  }
+
+  // ---- Fireworks: rise, explode into gravity-affected sparks, run
+  // continuously throughout playback alongside the butterflies ----
+  let fireworks = [];
+  let sparks = [];
+  function spawnFirework(w, h) {
+    const t = currentTheme();
+    const baseHue = (t.base + Math.random() * Math.max(t.spread, 40)) % 360;
+    fireworks.push({
+      x: w * (0.12 + Math.random() * 0.76),
+      y: h + 20 * dpr,
+      targetY: h * (0.12 + Math.random() * 0.4),
+      hue: baseHue,
+      speed: (7 + Math.random() * 3) * dpr,
+      trail: []
+    });
+  }
+  function updateAndDrawFireworks() {
+    for (let i = fireworks.length - 1; i >= 0; i--) {
+      const f = fireworks[i];
+      f.trail.push({ x: f.x, y: f.y });
+      if (f.trail.length > 7) f.trail.shift();
+      f.y -= f.speed;
+      for (let j = 0; j < f.trail.length; j++) {
+        const tp = f.trail[j];
+        const a = (j + 1) / f.trail.length;
+        ctx.beginPath();
+        ctx.arc(tp.x, tp.y, 1.6 * dpr * a, 0, Math.PI * 2);
+        ctx.fillStyle = col(f.hue, 80, 65, a * 0.8);
+        ctx.fill();
+      }
+      if (f.y <= f.targetY) {
+        const count = 36 + Math.floor(Math.random() * 26);
+        for (let k = 0; k < count; k++) {
+          const angle = Math.random() * Math.PI * 2;
+          const speed = (1.5 + Math.random() * 5) * dpr;
+          sparks.push({
+            x: f.x, y: f.y,
+            vx: Math.cos(angle) * speed,
+            vy: Math.sin(angle) * speed,
+            life: 1,
+            decay: 0.008 + Math.random() * 0.012,
+            hue: (f.hue + Math.random() * 30 - 15 + 360) % 360,
+            size: (1 + Math.random() * 2.2) * dpr
+          });
+        }
+        fireworks.splice(i, 1);
+      }
+    }
+    for (let i = sparks.length - 1; i >= 0; i--) {
+      const s = sparks[i];
+      s.x += s.vx;
+      s.y += s.vy;
+      s.vy += 0.045 * dpr;
+      s.vx *= 0.99;
+      s.life -= s.decay;
+      if (s.life <= 0) { sparks.splice(i, 1); continue; }
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, s.size * s.life, 0, Math.PI * 2);
+      ctx.fillStyle = col(s.hue, 90, 65, s.life * 0.9);
+      ctx.fill();
+    }
+    if (sparks.length > 600) sparks.splice(0, sparks.length - 600);
+  }
+
+  // ---- Lyrics (user-supplied words, flashed in sync with beat) ----
+  const lyricDisplay = document.getElementById('lyricDisplay');
+  const lyricsInput = document.getElementById('lyricsInput');
+  let lyricWords = [];
+  let lyricIdx = 0;
+  let beatsSinceLyric = 0;
+  function saveLyrics() {
+    lyricWords = lyricsInput.value.split(',').map(s => s.trim()).filter(Boolean);
+    lyricIdx = 0;
+    lyricsInput.classList.add('saved');
+    lyricsInput.placeholder = lyricWords.length ? lyricWords.length + ' word(s) loaded — will flash on the beat' : 'type lyric words, comma separated, press enter';
+    setTimeout(() => lyricsInput.classList.remove('saved'), 800);
+    lyricsInput.blur();
+  }
+  lyricsInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') saveLyrics();
+  });
+  lyricsInput.addEventListener('blur', () => {
+    if (lyricsInput.value.trim()) saveLyrics();
+  });
+  function triggerLyricFlash() {
+    if (!lyricWords.length) return;
+    beatsSinceLyric++;
+    if (beatsSinceLyric < 2) return;
+    beatsSinceLyric = 0;
+    lyricDisplay.textContent = lyricWords[lyricIdx % lyricWords.length];
+    lyricIdx++;
+    lyricDisplay.classList.add('show');
+    clearTimeout(lyricDisplay._t);
+    lyricDisplay._t = setTimeout(() => lyricDisplay.classList.remove('show'), 900);
+  }
+
+  let lastFrameTime = 0;
+  function draw() {
+    rafId = requestAnimationFrame(draw);
+    if (!analyser) return;
+    analyser.getByteFrequencyData(dataArray);
+
+    const w = canvas.width, h = canvas.height;
+    const now = performance.now();
+    const dt = lastFrameTime ? Math.min(0.1, (now - lastFrameTime) / 1000) : 0.016;
+    lastFrameTime = now;
+
+    const n = dataArray.length;
+    let bassSum = 0, midSum = 0, trebleSum = 0;
+    for (let i = 0; i < n; i++) {
+      if (i < n * 0.15) bassSum += dataArray[i];
+      else if (i < n * 0.5) midSum += dataArray[i];
+      else trebleSum += dataArray[i];
+    }
+    const bassAvg = bassSum / (n * 0.15);
+    const midAvg = midSum / (n * 0.35);
+    const trebleAvg = trebleSum / (n * 0.5);
+    const overall = (bassAvg + midAvg + trebleAvg) / 3;
+    const hue = hueFromSpectrum(bassAvg, midAvg, trebleAvg);
+
+    const isBeat = detectBeat(bassAvg, now);
+    if (isBeat) {
+      shakeAmount = Math.min(14, bassAvg / 12) * dpr;
+      spawnBurst(w / 2, h / 2, 18 + Math.floor(bassAvg / 8), hue, bassAvg);
+      spawnButterfly(w, h, hue);
+      if (bassAvg > 150) flashAmount = Math.min(0.4, (bassAvg - 150) / 200);
+      if (bassAvg > 120 && Math.random() < 0.35) spawnHypeText(w, h, hue);
+      if (bassAvg > 140 && Math.random() < 0.3) spawnFirework(w, h);
+      triggerLyricFlash();
+    }
+    shakeAmount *= 0.85;
+    flashAmount *= 0.82;
+
+    ctx.save();
+    if (shakeAmount > 0.3) {
+      const sx = (Math.random() - 0.5) * shakeAmount;
+      const sy = (Math.random() - 0.5) * shakeAmount;
+      ctx.translate(sx, sy);
+    }
+
+    ctx.fillStyle = 'rgba(10, 12, 16, 0.28)';
+    ctx.fillRect(-20, -20, w + 40, h + 40);
+
+    drawStars(w, h, trebleAvg, now);
+
+    if (MODES[mode] === 'RADIAL') drawRadial(w, h, hue, bassAvg, overall);
+    else if (MODES[mode] === 'BARS') drawBars(w, h, hue);
+    else if (MODES[mode] === 'RIBBON') drawRibbon(w, h, hue, overall);
+    else if (MODES[mode] === 'ORBIT') drawOrbit(w, h, hue, overall, bassAvg, now);
+    else drawKaleidoscope(w, h, hue, overall, now);
+
+    updateAndDrawParticles();
+    updateAndDrawButterflies(now);
+    updateAndDrawHypeTexts();
+    updateAndDrawFireworks();
+    updateHypeTicker(dt);
+
+    // breathing vignette, brighter on louder passages
+    const vig = ctx.createRadialGradient(w/2, h/2, Math.min(w,h) * 0.2, w/2, h/2, Math.max(w,h) * 0.72);
+    vig.addColorStop(0, 'rgba(0,0,0,0)');
+    vig.addColorStop(1, 'rgba(0,0,0,' + (0.35 + overall / 900) + ')');
+    ctx.fillStyle = vig;
+    ctx.fillRect(-20, -20, w + 40, h + 40);
+
+    if (flashAmount > 0.01) {
+      ctx.fillStyle = col(hue, 60, 85, flashAmount);
+      ctx.fillRect(-20, -20, w + 40, h + 40);
+    }
+
+    ctx.restore();
+  }
+
+  function drawRadial(w, h, hue, bassAvg, overall) {
+    const cx = w / 2, cy = h / 2;
+    const baseR = Math.min(w, h) * 0.14 + bassAvg * 0.6;
+    const bars = 96;
+    const maxLen = Math.min(w, h) * 0.34;
+
+    ctx.save();
+    ctx.translate(cx, cy);
+
+    // core glow disc
+    const coreR = baseR * (0.6 + overall / 400);
+    ctx.beginPath();
+    ctx.arc(0, 0, coreR, 0, Math.PI * 2);
+    ctx.fillStyle = col(hue, 70, 55, 0.18);
+    ctx.fill();
+
+    for (let i = 0; i < bars; i++) {
+      const val = dataArray[Math.floor(i * (dataArray.length / bars))];
+      const pct = val / 255;
+      const angle = (i / bars) * Math.PI * 2;
+      const len = pct * maxLen;
+      const x1 = Math.cos(angle) * baseR;
+      const y1 = Math.sin(angle) * baseR;
+      const x2 = Math.cos(angle) * (baseR + len);
+      const y2 = Math.sin(angle) * (baseR + len);
+      ctx.strokeStyle = col((hue + i * 1.2) % 360, 75, 55 + pct * 20, 0.5 + pct * 0.5);
+      ctx.lineWidth = Math.max(1.5, (w / bars) * 0.35);
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  function drawBars(w, h, hue) {
+    const barCount = 80;
+    const gap = w * 0.004;
+    const barW = (w - gap * (barCount - 1)) / barCount;
+    let x = 0;
+    for (let i = 0; i < barCount; i++) {
+      const val = dataArray[Math.floor(i * (dataArray.length / barCount))];
+      const pct = val / 255;
+      const barH = pct * h * 0.68;
+      const grad = ctx.createLinearGradient(0, h, 0, h - barH);
+      const localHue = (hue + i * 1.6) % 360;
+      grad.addColorStop(0, col(localHue, 70, 45, 0.9));
+      grad.addColorStop(1, col(localHue, 85, 65, 0.95));
+      ctx.fillStyle = grad;
+      ctx.fillRect(x, h - barH, barW, barH);
+      x += barW + gap;
+    }
+  }
+
+  let ribbonHistory = [];
+  function drawRibbon(w, h, hue, overall) {
+    const midY = h / 2;
+    const points = 128;
+    ribbonHistory.unshift(overall);
+    if (ribbonHistory.length > 3) ribbonHistory.pop();
+
+    ctx.lineWidth = 2 * dpr;
+    for (let layer = 0; layer < 3; layer++) {
+      ctx.beginPath();
+      const amp = h * 0.22 * (1 - layer * 0.25);
+      const offset = layer * 40 * dpr;
+      for (let i = 0; i <= points; i++) {
+        const idx = Math.floor(i * (dataArray.length / points));
+        const val = (dataArray[idx] / 255) - 0.5;
+        const x = (i / points) * w;
+        const y = midY + offset - layer * 0.5 * offset + val * amp;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      const localHue = (hue + layer * 40) % 360;
+      ctx.strokeStyle = col(localHue, 75, 60 - layer * 10, 0.85 - layer * 0.2);
+      ctx.stroke();
+    }
+  }
+
+  function drawOrbit(w, h, hue, overall, bassAvg, now) {
+    const cx = w / 2, cy = h / 2;
+    const rings = 3;
+    const bodies = 40;
+    const t = now / 1000;
+
+    for (let r = 0; r < rings; r++) {
+      const radius = Math.min(w, h) * (0.12 + r * 0.1) + bassAvg * 0.3;
+      const spin = t * (0.25 + r * 0.12) * (r % 2 === 0 ? 1 : -1);
+      for (let i = 0; i < bodies; i++) {
+        const idx = Math.floor(((i + r * 7) % dataArray.length));
+        const val = dataArray[idx];
+        const pct = val / 255;
+        const angle = (i / bodies) * Math.PI * 2 + spin;
+        const wobble = pct * radius * 0.35;
+        const x = cx + Math.cos(angle) * (radius + wobble);
+        const y = cy + Math.sin(angle) * (radius + wobble);
+        const sz = (1.2 + pct * 3.5) * dpr;
+        ctx.beginPath();
+        ctx.arc(x, y, sz, 0, Math.PI * 2);
+        ctx.fillStyle = col((hue + r * 60 + i * 2) % 360, 80, 55 + pct * 20, 0.55 + pct * 0.45);
+        ctx.fill();
+      }
+    }
+
+    // pulsing core
+    const coreR = Math.min(w, h) * 0.05 * (1 + overall / 220);
+    const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, coreR * 2.4);
+    grad.addColorStop(0, col(hue, 90, 70, 0.85));
+    grad.addColorStop(1, col(hue, 90, 60, 0));
+    ctx.beginPath();
+    ctx.arc(cx, cy, coreR * 2.4, 0, Math.PI * 2);
+    ctx.fillStyle = grad;
+    ctx.fill();
+  }
+
+  function drawKaleidoscope(w, h, hue, overall, now) {
+    const cx = w / 2, cy = h / 2;
+    const segments = 8;
+    const maxR = Math.min(w, h) * 0.46;
+    const points = 48;
+    const t = now / 4000;
+
+    for (let seg = 0; seg < segments; seg++) {
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.rotate((seg / segments) * Math.PI * 2 + t);
+      if (seg % 2 === 1) ctx.scale(1, -1);
+
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      for (let i = 0; i <= points; i++) {
+        const idx = Math.floor(i * (dataArray.length / points) / segments);
+        const val = dataArray[idx] / 255;
+        const angle = (i / points) * (Math.PI * 2 / segments);
+        const r = maxR * 0.15 + val * maxR * 0.85;
+        ctx.lineTo(Math.cos(angle) * r, Math.sin(angle) * r);
+      }
+      ctx.closePath();
+      const grad = ctx.createLinearGradient(0, 0, maxR, 0);
+      grad.addColorStop(0, col((hue + seg * 12) % 360, 75, 30, 0.05));
+      grad.addColorStop(1, col((hue + seg * 12) % 360, 85, 60, 0.5 + overall / 500));
+      ctx.fillStyle = grad;
+      ctx.fill();
+      ctx.strokeStyle = col((hue + seg * 12 + 30) % 360, 80, 68, 0.6);
+      ctx.lineWidth = 1.2 * dpr;
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    const coreR = Math.min(w, h) * 0.035 * (1 + overall / 200);
+    ctx.beginPath();
+    ctx.arc(cx, cy, coreR, 0, Math.PI * 2);
+    ctx.fillStyle = col(hue, 90, 75, 0.9);
+    ctx.fill();
+  }
+
+  // idle shimmer while nothing loaded
+  function idleFrame() {
+    const w = canvas.width, h = canvas.height;
+    ctx.fillStyle = 'rgba(10, 12, 16, 1)';
+    ctx.fillRect(0, 0, w, h);
+    drawStars(w, h, 0, performance.now());
+    if (!rafId) requestAnimationFrame(idleFrame);
+  }
+  resize();
+  idleFrame();
+
+  // ambient trickle so butterflies never fully disappear between beats
+  setInterval(() => {
+    if (rafId && butterflies.length < 8) {
+      spawnButterfly(canvas.width, canvas.height, currentTheme().base);
+    }
+  }, 2200);
+
+  // fireworks fire continuously throughout playback, not just on hard beats
+  setInterval(() => {
+    if (rafId) spawnFirework(canvas.width, canvas.height);
+  }, 1800);
+})();
+</script>
+</body>
+</html>
